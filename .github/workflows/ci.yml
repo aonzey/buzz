@@ -107,11 +107,18 @@ jobs:
     timeout-minutes: 90
     env:
       BUZZ_DISABLE_TELEMETRY: true
+    # One failing matrix leg must not fail the whole job: release needs build,
+    # and a single red leg used to skip the release entirely.
+    continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
+          # Only GitHub-hosted x86_64 macOS image left; retired in August 2027.
+          # Best effort: never let it hold back the Windows/ARM64 release.
+          - os: macos-15-intel
+            experimental: true
           - os: windows-latest
           - os: ubuntu-latest
     steps:
@@ -385,11 +392,15 @@ jobs:
       # GITHUB_TOKEN defaults to read-only, and uploading release assets then
       # fails with "Resource not accessible by integration".
       contents: write
+    continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
+          # No Buzz-macOS-X64 artifact to download if the Intel build failed.
+          - os: macos-15-intel
+            experimental: true
           - os: windows-latest
           # Current AppImage files are too large for the release
           # This should be re-enabled if we can get AppImage size under ~2GB
@@ -421,3 +432,27 @@ jobs:
             Buzz*.bin
             Buzz*.dmg
             Buzz*.AppImage
+
+  # The Linux wheel is the only one that can be installed with a plain
+  # "pip install <wheel>"; hatch_build.py tags it py3-none-manylinux_2_34_x86_64.
+  # It is uploaded as its own asset because the release job above only handles
+  # the platform installers.
+  release_wheels:
+    runs-on: ubuntu-latest
+    env:
+      BUZZ_DISABLE_TELEMETRY: true
+    permissions:
+      contents: write
+    # Ordered after release so both jobs never update the same release at once.
+    needs: [build_wheels, test, release]
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: buzz-wheel-Linux-*
+          path: wheels
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: wheels/**/*.whl
