@@ -71,13 +71,13 @@ dependencies = [
     # release to unpin transformers (allows 5.x). Regular nemo-toolkit caps at
     # transformers <4.58. cuda-bindings pinned <13 below to stay on CUDA 12.
     #
-    # Windows is excluded: nemo drags in editdistance==0.8.1 and docopt==0.6.2,
-    # neither of which ships a cp313 wheel, and both fail to build from source
-    # with MSVC (editdistance: MSVC mangles a Japanese comment -> C2059).
-    # Everywhere else it is installed, so speaker identification is tested in CI.
-    # Speaker identification degrades gracefully without it (lazy import in
-    # buzz/widgets/transcription_viewer/speaker_identification_widget.py).
-    "nemo-toolkit-asr[asr]==2.8.0rc2; sys_platform != 'win32'",
+    # Windows note: nemo drags in editdistance==0.8.1 and docopt==0.6.2, neither
+    # of which ships a cp313 wheel, so both are built from source. That needs a
+    # working MSVC x64 environment plus CL=/utf-8 (MSVC mangles a Japanese
+    # comment in editdistance otherwise) and DISTUTILS_USE_SDK=1/MSSdk=1 so
+    # setuptools does not go looking for Visual Studio in the registry.
+    # See CONTRIBUTING/docs for the "uv sync on Windows" prerequisites.
+    "nemo-toolkit-asr[asr]==2.8.0rc2",
     # nemo-toolkit-asr leaves cuda-bindings unpinned; keep it on CUDA 12 to match torch cu129
     "cuda-bindings>=12.6,<13; sys_platform != 'darwin'",
     "nltk>=3.10.3",

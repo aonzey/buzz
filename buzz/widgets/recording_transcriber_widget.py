@@ -356,27 +356,43 @@ class RecordingTranscriberWidget(QWidget):
 
         return bar
 
+    def _reset_copy_button_later(self, delay_ms: int):
+        """Restore the copy button label, but only while this widget is alive.
+
+        QTimer.singleShot() fires even after the widget (and the button) has
+        been destroyed, which raises "wrapped C/C++ object of type QPushButton
+        has been deleted". Parenting the timer to this widget ties its lifetime
+        to ours, so it is dropped instead of firing on a dead button.
+        """
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(self._reset_copy_button)
+        timer.start(delay_ms)
+
+    def _reset_copy_button(self):
+        self.copy_transcript_button.setText(_("Copy"))
+
     def on_copy_transcript_clicked(self):
         """Handle copy transcript button click"""
         transcript_text = self.transcription_text_box.toPlainText().strip()
 
         if not transcript_text:
             self.copy_transcript_button.setText(_("Nothing to copy!"))
-            QTimer.singleShot(1500, lambda: self.copy_transcript_button.setText(_("Copy")))
+            self._reset_copy_button_later(1500)
             return
 
         app = QApplication.instance()
         if app is None:
             logging.warning("QApplication instance not available; clipboard disabled")
             self.copy_transcript_button.setText(_("Copy failed"))
-            QTimer.singleShot(1500, lambda: self.copy_transcript_button.setText(_("Copy")))
+            self._reset_copy_button_later(1500)
             return
 
         clipboard = app.clipboard()
         if clipboard is None:
             logging.warning("Clipboard not available")
             self.copy_transcript_button.setText(_("Copy failed"))
-            QTimer.singleShot(1500, lambda: self.copy_transcript_button.setText(_("Copy")))
+            self._reset_copy_button_later(1500)
             return
 
         try:
@@ -384,11 +400,11 @@ class RecordingTranscriberWidget(QWidget):
         except Exception as e:
             logging.warning("Clipboard error: %s", e)
             self.copy_transcript_button.setText(_("Copy failed"))
-            QTimer.singleShot(1500, lambda: self.copy_transcript_button.setText(_("Copy")))
+            self._reset_copy_button_later(1500)
             return
 
         self.copy_transcript_button.setText(_("Copied!"))
-        QTimer.singleShot(2000, lambda: self.copy_transcript_button.setText(_("Copy")))
+        self._reset_copy_button_later(2000)
 
     def on_show_presentation_clicked(self):
         """Handle click on 'Show in new window' button"""
@@ -421,8 +437,13 @@ class RecordingTranscriberWidget(QWidget):
             if self.presentation_window:
                 # reload setting to apply new size
                 self.presentation_window.load_settings()
-        #Incase user drags slider, Debounce by waiting 100ms before saving
-        QTimer.singleShot(100, save_settings)
+        #Incase user drags slider, Debounce by waiting 100ms before saving.
+        #Parented to this widget so it is discarded instead of firing after the
+        #widget was destroyed.
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(save_settings)
+        timer.start(100)
 
     def on_theme_changed(self, index: int):
         """Handle theme selection change"""
