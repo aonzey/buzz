@@ -241,21 +241,34 @@ jobs:
             sudo pkill -9 XProtect >/dev/null || true;
             while pgrep XProtect; do sleep 3; done;
 
-            CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-            KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+            # Forks do not inherit the upstream Apple signing secrets, and a
+            # missing certificate used to fail this job before anything was
+            # built -- which also skipped the release job, since it needs
+            # build. Fall back to an unsigned dmg when the secrets are absent.
+            if [ -n "$BUILD_CERTIFICATE_BASE64" ]; then
 
-            echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+              CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+              KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
 
-            security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-            security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-            security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+              echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
 
-            security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-            security list-keychain -d user -s $KEYCHAIN_PATH
+              security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+              security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+              security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
 
-            xcrun notarytool store-credentials --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" notarytool --validate
+              security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+              security list-keychain -d user -s $KEYCHAIN_PATH
 
-            uv run make bundle_mac
+              xcrun notarytool store-credentials --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" notarytool --validate
+
+              uv run make bundle_mac
+
+            else
+
+              echo "BUILD_CERTIFICATE_BASE64 is not set, building an unsigned dmg"
+              uv run make bundle_mac_unsigned
+
+            fi
 
           elif [ "$RUNNER_OS" == "Windows" ]; then
 
@@ -346,7 +359,8 @@ jobs:
     environment: pypi
     permissions:
       id-token: write
-    if: startsWith(github.ref, 'refs/tags/')
+    # Skipped on forks: they do not inherit the upstream PYPI_TOKEN.
+    if: ${{ startsWith(github.ref, 'refs/tags/') && secrets.PYPI_TOKEN != '' }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -396,5 +410,6 @@ jobs:
           files: |
             Buzz*-unix.tar.gz
             Buzz*.exe
+            Buzz*.bin
             Buzz*.dmg
             Buzz*.AppImage
