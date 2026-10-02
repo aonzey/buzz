@@ -85,6 +85,8 @@ class Settings:
 
         AUDIO_PLAYBACK_RATE = "audio/playback-rate"
 
+        PROXY = "proxy"
+
         FORCE_CPU = "force-cpu"
         REDUCE_GPU_MEMORY = "reduce-gpu-memory"
         PREVENT_SLEEP_WHILE_TRANSCRIBING = "prevent-sleep-while-transcribing"

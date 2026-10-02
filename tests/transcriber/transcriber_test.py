@@ -9,7 +9,17 @@ from buzz.transcriber.transcriber import (
     OutputFormat,
     Segment,
     Task,
+    TEXT_TRANSLATION_SEGMENT_KEY,
+    effective_whisper_task,
 )
+
+
+class TestEffectiveWhisperTask:
+    def test_combined_task_transcribes(self):
+        assert Task("transcribe&translate") == Task.TRANSCRIBE_TRANSLATE
+        assert effective_whisper_task(Task.TRANSCRIBE_TRANSLATE) == "transcribe"
+        assert effective_whisper_task(Task.TRANSCRIBE) == "transcribe"
+        assert effective_whisper_task(Task.TRANSLATE) == "translate"
 
 
 class TestToTimestamp:
@@ -38,7 +48,7 @@ def test_url_output_path_uses_safe_display_name(tmp_path):
 @pytest.mark.parametrize(
     "output_format,output_text",
     [
-        (OutputFormat.TXT, "Bien venue dans "),
+        (OutputFormat.TXT, "Bien\nvenue dans\n"),
         (
             OutputFormat.SRT,
             "1\n00:00:00,040 --> 00:00:00,299\nBien\n\n2\n00:00:00,299 --> 00:00:00,329\nvenue dans\n\n",
@@ -57,6 +67,43 @@ def test_write_output(
 
     write_output(
         path=str(output_file_path), segments=segments, output_format=output_format
+    )
+
+    with open(output_file_path, encoding="utf-8") as output_file:
+        assert output_text == output_file.read()
+
+
+@pytest.mark.parametrize(
+    "output_format,output_text",
+    [
+        (OutputFormat.TXT, "Bien\nHello\nvenue dans\ncome in\n"),
+        (
+            OutputFormat.SRT,
+            "1\n00:00:00,040 --> 00:00:00,299\nBien\nHello\n\n"
+            "2\n00:00:00,299 --> 00:00:00,329\nvenue dans\ncome in\n\n",
+        ),
+        (
+            OutputFormat.VTT,
+            "WEBVTT\n\n00:00:00.040 --> 00:00:00.299\nBien\nHello\n\n"
+            "00:00:00.299 --> 00:00:00.329\nvenue dans\ncome in\n\n",
+        ),
+    ],
+)
+def test_write_output_text_and_translation(
+    tmp_path: pathlib.Path, output_format: OutputFormat, output_text: str
+):
+    """Each block is its text followed by its translation on the next line."""
+    output_file_path = tmp_path / "whisper.txt"
+    segments = [
+        Segment(40, 299, "Bien", "Hello"),
+        Segment(299, 329, "venue dans", "come in"),
+    ]
+
+    write_output(
+        path=str(output_file_path),
+        segments=segments,
+        output_format=output_format,
+        segment_key=TEXT_TRANSLATION_SEGMENT_KEY,
     )
 
     with open(output_file_path, encoding="utf-8") as output_file:

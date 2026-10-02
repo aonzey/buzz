@@ -74,7 +74,11 @@ ifeq ($(OS), Windows_NT)
 	cp whisper.cpp/build/bin/Release/whisper-cli.exe buzz/whisper_cpp/
 	cp whisper.cpp/build/bin/Release/whisper-server.exe buzz/whisper_cpp/
 	cp dll_backup/SDL2.dll buzz/whisper_cpp
-	test -f buzz/whisper_cpp/ggml-silero-v6.2.0.bin || curl -L -o buzz/whisper_cpp/ggml-silero-v6.2.0.bin https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin
+	# LOCAL (offline build): huggingface.co is unreachable from this machine, and
+	# this model is only needed for the optional --vad flag, so a failed download
+	# must not abort the build. Drop ggml-silero-v6.2.0.bin into buzz/whisper_cpp/
+	# manually (or restore this line) if you need VAD. Revert: git checkout Makefile
+	-@test -f buzz/whisper_cpp/ggml-silero-v6.2.0.bin || curl -L -o buzz/whisper_cpp/ggml-silero-v6.2.0.bin https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin
 endif
 
 ifeq ($(shell uname -s), Linux)

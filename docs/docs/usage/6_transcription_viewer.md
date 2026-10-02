@@ -26,10 +26,20 @@ The transcription viewer is organized into several key sections:
 - **Function**: Export transcription in various formats
 - **Formats**: SRT, VTT, TXT, JSON, and more
 - **Usage**: Click to open export menu and select desired format
+- **Text+Translation**: Exports the original text and its translation together
+  (the translation is written right below every segment). The option only shows
+  up once the transcript has a complete translation.
 
 ### Translate Button
 - **Function**: Translate transcription to different languages
 - **Usage**: Click to open translation settings and start translation
+- **Scope**: If segments are selected in the table, only those segments are
+  translated. With no selection, the whole transcript is translated.
+- **Progress**: A progress window shows `x/N` while translating.
+  - **Stop Translation** pauses the queue; the button becomes **Continue
+    Translation**, so the remaining segments stay queued and can be resumed.
+  - Closing the progress window (or pressing `Esc`) stops the translation for
+    good: queued segments are dropped and already translated ones are kept.
 
 ### Resize Button
 - **Function**: Adjust transcription segment boundaries
@@ -50,6 +60,24 @@ The transcription viewer is organized into several key sections:
 - **Function**: Automatically scroll to the currently playing text
 - **Shortcut**: `Ctrl+G` (Windows/Linux) or `Cmd+G` (macOS)
 - **Usage**: Click to jump to the current audio position in the transcript
+
+## Selecting Segments
+
+Segments can be selected with the mouse, the same way as in a spreadsheet.
+The selection decides which segments the **Translate** button processes.
+
+- **Click**: Select a single segment.
+- **Shift + Click**: Select a continuous range from the previously clicked
+  segment to the clicked one. Works both upwards and downwards.
+- **Ctrl + Click**: Add or remove a single segment, so unrelated segments can be
+  picked.
+- **Ctrl + Shift + Click**: Add a continuous range to the current selection.
+- **Click on the empty area below the last segment**: Clear the selection, so the
+  next translation covers the whole transcript.
+
+Rows that Buzz highlights on its own, for example the segment that is currently
+playing, do not count as a selection. Click the empty area below the table if a
+previous selection should be discarded.
 
 ## Search Functionality
 

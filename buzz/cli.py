@@ -11,6 +11,8 @@ from buzz.model_loader import (
     TranscriptionModel,
     ModelDownloader,
 )
+from buzz.proxy import apply_proxy
+from buzz.settings.settings import Settings
 from buzz.store.keyring_store import get_password, Key
 from buzz.transcriber.transcriber import (
     Task,
@@ -105,6 +107,12 @@ def _add_command_options(parser: QCommandLineParser):
     srt_option = QCommandLineOption(["srt"], "Output result in an SRT file.")
     vtt_option = QCommandLineOption(["vtt"], "Output result in a VTT file.")
     txt_option = QCommandLineOption("txt", "Output result in a TXT file.")
+    proxy_option = QCommandLineOption(
+        "proxy",
+        "Proxy used for model downloads, URL imports and AI translation. "
+        'Example: "http://127.0.0.1:7890". Defaults to the proxy saved in Preferences.',
+        "url",
+    )
     hide_gui_option = QCommandLineOption("hide-gui", "Hide the main application window.")
 
     parser.addOptions(
@@ -123,6 +131,7 @@ def _add_command_options(parser: QCommandLineParser):
             srt_option,
             vtt_option,
             txt_option,
+            proxy_option,
             hide_gui_option,
         ]
     )
@@ -142,6 +151,7 @@ def _add_command_options(parser: QCommandLineParser):
         "srt": srt_option,
         "vtt": vtt_option,
         "txt": txt_option,
+        "proxy": proxy_option,
         "hide_gui": hide_gui_option,
     }
 
@@ -176,6 +186,7 @@ def _add_transcription_tasks(
     transcription_options: TranscriptionOptions,
     output_formats: typing.Set[OutputFormat],
     output_directory: str = "",
+    text_with_translation: bool = False,
 ):
     for file_path in file_paths:
         path_is_url = is_url(file_path)
@@ -183,6 +194,7 @@ def _add_transcription_tasks(
             file_paths=[file_path] if not path_is_url else None,
             url=file_path if path_is_url else None,
             output_formats=output_formats,
+            text_with_translation=text_with_translation,
         )
         transcription_task = FileTranscriptionTask(
             file_path=file_path if not path_is_url else None,
@@ -196,6 +208,18 @@ def _add_transcription_tasks(
             output_directory=output_directory if output_directory != "" else None,
         )
         app.add_task(transcription_task, quit_on_complete=True)
+
+
+def _load_llm_translation_settings() -> typing.Tuple[str, str]:
+    """Return the saved (model, instructions) pair used for AI translation."""
+    settings = Settings()
+    settings.settings.beginGroup("file_transcriber")
+    try:
+        llm_model = settings.settings.value("llm_model", "") or ""
+        llm_prompt = settings.settings.value("llm_prompt", "") or ""
+    finally:
+        settings.settings.endGroup()
+    return llm_model, llm_prompt
 
 
 def _process_add_output_formats(parser, opts) -> typing.Set[OutputFormat]:
@@ -222,6 +246,11 @@ def _handle_add_command(app: Application, parser: QCommandLineParser):
     if len(file_paths) == 0:
         raise CommandLineError("No input files")
 
+    # Export before the model is resolved so downloads use the proxy too.
+    proxy = parser.value(opts["proxy"]).strip()
+    if proxy:
+        apply_proxy(proxy)
+
     task = parse_enum_option(opts["task"], parser, Task)
     model_type = parse_enum_option(opts["model_type"], parser, CommandLineModelType)
     model_size = parse_enum_option(opts["model_size"], parser, WhisperModelSize)
@@ -247,14 +276,33 @@ def _handle_add_command(app: Application, parser: QCommandLineParser):
         if openai_access_token == "":
             raise CommandLineError("No OpenAI access token found")
 
+    # "transcribe&translate" is a command line only task: transcribe in the
+    # source language, then translate every segment with the configured AI
+    # model and export the text together with its translation.
+    text_with_translation = task == Task.TRANSCRIBE_TRANSLATE
+    llm_model = ""
+    llm_prompt = ""
+    if text_with_translation:
+        llm_model, llm_prompt = _load_llm_translation_settings()
+        if not llm_model or not llm_prompt:
+            raise CommandLineError(
+                'Task "transcribe&translate" needs an AI model and instructions. '
+                "Set them under Preferences > File Transcription (AI translation)."
+            )
+
     transcription_options = TranscriptionOptions(
         model=model,
-        task=task,
+        # Whisper itself only knows "transcribe"/"translate"; the combined task
+        # transcribes and the translation runs afterwards.
+        task=Task.TRANSCRIBE if text_with_translation else task,
         language=language,
         initial_prompt=parser.value(opts["initial_prompt"]),
         word_level_timings=parser.isSet(opts["word_timestamps"]),
         extract_speech=parser.isSet(opts["extract_speech"]),
         openai_access_token=openai_access_token,
+        enable_llm_translation=text_with_translation,
+        llm_model=llm_model,
+        llm_prompt=llm_prompt,
     )
 
     _add_transcription_tasks(
@@ -264,6 +312,7 @@ def _handle_add_command(app: Application, parser: QCommandLineParser):
         transcription_options,
         output_formats,
         parser.value(opts["output_directory"]),
+        text_with_translation,
     )
 
     if parser.isSet(opts["hide_gui"]):

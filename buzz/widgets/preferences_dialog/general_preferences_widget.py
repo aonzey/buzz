@@ -139,6 +139,19 @@ class GeneralPreferencesWidget(QWidget):
         self.openai_api_model_line_edit.setPlaceholderText("whisper-1")
         layout.addRow(_("OpenAI API model"), self.openai_api_model_line_edit)
 
+        self.proxy = (self.settings.value(key=Settings.Key.PROXY, default_value="") or "").strip()
+
+        self.proxy_line_edit = LineEdit(self.proxy, self)
+        self.proxy_line_edit.setObjectName("ProxyLineEdit")
+        self.proxy_line_edit.textChanged.connect(self.on_proxy_changed)
+        self.proxy_line_edit.setMinimumWidth(200)
+        self.proxy_line_edit.setPlaceholderText("http://127.0.0.1:7890")
+        self.proxy_line_edit.setToolTip(
+            _("Proxy used for model downloads, URL imports and AI translation. "
+              "Leave empty to use the system proxy settings.")
+        )
+        layout.addRow(_("Proxy"), self.proxy_line_edit)
+
         default_export_file_name = self.settings.get_default_export_file_template()
 
         default_export_file_name_line_edit = LineEdit(default_export_file_name, self)
@@ -287,6 +300,13 @@ class GeneralPreferencesWidget(QWidget):
 
     def on_openai_api_model_changed(self, text: str):
         self.settings.set_value(Settings.Key.OPENAI_API_MODEL, text)
+
+    def on_proxy_changed(self, text: str):
+        from buzz.proxy import apply_proxy
+
+        self.proxy = text.strip()
+        self.settings.set_value(Settings.Key.PROXY, self.proxy)
+        apply_proxy(self.proxy)
 
     def on_recording_export_enable_changed(self, state: int):
         self.recording_export_enabled = state == 2

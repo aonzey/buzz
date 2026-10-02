@@ -13,7 +13,9 @@ class TasksComboBox(QComboBox):
 
     def __init__(self, default_task: Task, parent: Optional[QWidget], *args) -> None:
         super().__init__(parent, *args)
-        self.tasks = [i for i in Task]
+        # Tasks without a UI label (e.g. the command line only
+        # "transcribe&translate") are not offered here.
+        self.tasks = [i for i in Task if i in TASK_LABEL_TRANSLATIONS]
         self.addItems(map(lambda task: TASK_LABEL_TRANSLATIONS[task], self.tasks))
         self.currentIndexChanged.connect(self.on_index_changed)
         self.setCurrentText(TASK_LABEL_TRANSLATIONS[default_task])

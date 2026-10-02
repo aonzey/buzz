@@ -14,7 +14,8 @@ Usage: buzz add [options] [file url file...]
 
 Options:
   -t, --task <task>              The task to perform. Allowed: translate,
-                                 transcribe. Default: transcribe.
+                                 transcribe, transcribe&translate. Default:
+                                 transcribe.
   -m, --model-type <model-type>  Model type. Allowed: whisper, whispercpp,
                                  huggingface, fasterwhisper, openaiapi. Default:
                                  whisper.
@@ -67,6 +68,10 @@ Options:
   --srt                          Output result in an SRT file.
   --vtt                          Output result in a VTT file.
   --txt                          Output result in a TXT file.
+  --proxy <url>                  Proxy used for model downloads, URL imports
+                                 and AI translation. Example:
+                                 "http://127.0.0.1:7890". Defaults to the
+                                 proxy saved in Preferences.
   --hide-gui                     Hide the main application window.
   -h, --help                     Displays help on commandline options.
   --help-all                     Displays help including Qt specific options.
@@ -84,4 +89,18 @@ buzz add --task translate --language fr --model-type openaiapi /Users/user/Downl
 
 # 使用 Whisper.cpp "small" 模型转录一个 MP4 文件，并立即导出为 SRT 和 VTT 文件
 buzz add --task transcribe --model-type whispercpp --model-size small --prompt "My initial prompt（我的初始提示）" --srt --vtt /Users/user/Downloads/buzz/1b3b03e4-8db5-ea2c-ace5-b71ff32e3304.mp4
+
+# 先按原语言转录，再用偏好设置里配置的 AI 模型逐句翻译（transcribe&translate 仅命令行可用）
+buzz add --task "transcribe&translate" --srt interview-fr.mp3
+
+# 让模型下载、URL 导入和 AI 翻译都走代理
+buzz add --proxy http://127.0.0.1:7890 --model-type whispercpp --srt talk.mp4
 ```
+
+### `transcribe&translate`
+
+`--task "transcribe&translate"` 先按原始语言转录，再用偏好设置中配置的 AI 模型逐句翻译每一段。
+因此运行前必须先在偏好设置里保存好 AI 模型和翻译指令，否则会直接报错退出。
+
+该任务仅在命令行提供，桌面端仍然只有 `transcribe` 和 `translate`。
+导出时每段先写原文、再写译文，与字幕窗口导出菜单中的 **Text+Translation** 一致。

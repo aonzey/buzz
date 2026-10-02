@@ -1,6 +1,7 @@
 import os
+import sys
 import logging
-from typing import Tuple, List, Optional, Set
+from typing import Tuple, List, Optional, Set, Dict
 from uuid import UUID
 
 from PyQt6 import QtGui
@@ -91,6 +92,9 @@ class MainWindow(QMainWindow):
 
         self.quit_on_complete = False
         self.pending_quit_task_uids: Set[UUID] = set()
+        # Last printed percentage per task, so command line progress is not
+        # reprinted on every single segment.
+        self._cli_progress_reported: Dict[UUID, int] = {}
         self.transcription_service = transcription_service
 
         self.plugin_manager = PluginManager(self.transcription_service, self.settings)
@@ -477,6 +481,32 @@ class MainWindow(QMainWindow):
         self.transcription_service.update_transcription_progress(task.uid, progress)
         self.table_widget.refresh_row(task.uid)
 
+        if self.quit_on_complete:
+            self._report_cli_progress(task, progress)
+
+    def _report_cli_progress(self, task: FileTranscriptionTask, progress: float):
+        """Print coarse progress for command line runs (one line per 10%)."""
+        percent = int(min(max(progress, 0.0), 1.0) * 100)
+        last_percent = self._cli_progress_reported.get(task.uid, -10)
+        if percent == last_percent:
+            return
+        if percent < 100 and percent - last_percent < 10:
+            return
+
+        self._cli_progress_reported[task.uid] = percent
+        print(
+            f"Transcribing {self._task_display_name(task)}: {percent}%",
+            flush=True,
+        )
+
+    @staticmethod
+    def _task_display_name(task: FileTranscriptionTask) -> str:
+        if task.file_path:
+            return os.path.basename(task.file_path)
+        if task.url:
+            return task.url
+        return "task"
+
     def on_task_download_progress(
         self, task: FileTranscriptionTask, fraction_downloaded: float
     ):
@@ -531,6 +561,14 @@ class MainWindow(QMainWindow):
             self.transcription_service.update_transcription_as_completed(task.uid, segments)
             self.table_widget.refresh_row(task.uid)
 
+        if self.quit_on_complete:
+            print(
+                f"Transcription completed: {self._task_display_name(task)} "
+                f"({len(segments)} segment(s))",
+                flush=True,
+            )
+            self._cli_progress_reported.pop(task.uid, None)
+
         self.quit_if_all_tasks_done(task)
 
     def quit_if_all_tasks_done(self, task: FileTranscriptionTask):
@@ -547,6 +585,14 @@ class MainWindow(QMainWindow):
     def on_task_error(self, task: FileTranscriptionTask, error: str):
         self.transcription_service.update_transcription_as_failed(task.uid, error)
         self.table_widget.refresh_row(task.uid)
+
+        if self.quit_on_complete:
+            print(
+                f"Transcription failed: {self._task_display_name(task)} - {error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            self._cli_progress_reported.pop(task.uid, None)
 
         self.quit_if_all_tasks_done(task)
 

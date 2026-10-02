@@ -57,6 +57,12 @@ if platform.system() == "Windows":
 
 
 def main():
+    # Export the proxy before anything else so model downloads, URL imports and
+    # translation requests all go through it.
+    from buzz.proxy import apply_proxy
+
+    apply_proxy()
+
     if platform.system() == "Linux":
         multiprocessing.set_start_method("spawn")
 

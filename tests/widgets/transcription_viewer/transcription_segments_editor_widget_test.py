@@ -2,8 +2,10 @@ import uuid
 from uuid import UUID
 import pytest
 from pytestqt.qtbot import QtBot
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtSql import QSqlRecord
+from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QWidget
 
 from buzz.db.entity.transcription import Transcription
 from buzz.db.entity.transcription_segment import TranscriptionSegment
@@ -587,3 +589,137 @@ class TestTranscriptionSegmentsEditorWidget:
 
         from PyQt6.QtWidgets import QTableView
         assert widget.selectionMode() == QTableView.SelectionMode.ExtendedSelection
+
+
+class TestMultiRowSelection:
+    """Shift (range) and Ctrl (jump) selection of transcript rows"""
+
+    @pytest.fixture()
+    def transcription(
+            self, transcription_dao, transcription_segment_dao
+    ) -> Transcription:
+        id = uuid.uuid4()
+        transcription_dao.insert(
+            Transcription(
+                id=str(id),
+                status="completed",
+                file=test_audio_path,
+                task=Task.TRANSCRIBE.value,
+                model_type=ModelType.WHISPER.value,
+                whisper_model_size=WhisperModelSize.TINY.value,
+            )
+        )
+        for start, end, text in (
+            (40, 299, "Bien"),
+            (299, 600, "venue dans"),
+            (600, 1000, "Press Buzz"),
+            (1000, 1400, "to transcribe"),
+        ):
+            transcription_segment_dao.insert(
+                TranscriptionSegment(start, end, text, "", str(id))
+            )
+        return transcription_dao.find_by_id(str(id))
+
+    @pytest.fixture()
+    def translator(self):
+        from unittest.mock import MagicMock
+        return MagicMock(spec=Translator)
+
+    @pytest.fixture()
+    def table(self, qtbot: QtBot, transcription, translator):
+        parent = QWidget()
+        qtbot.add_widget(parent)
+        table = TranscriptionSegmentsEditorWidget(
+            transcription_id=uuid.UUID(hex=transcription.id),
+            translator=translator,
+            parent=parent,
+        )
+        # qtbot only keeps a weak reference, hold on to the parent so Qt does
+        # not delete the table when the fixture returns
+        table.test_parent = parent
+        parent.resize(900, 600)
+        table.setGeometry(0, 0, 900, 400)
+        parent.show()
+        qtbot.wait(50)
+        return table
+
+    @staticmethod
+    def click(table, row, modifiers=Qt.KeyboardModifier.NoModifier):
+        # The id column is hidden, click through the text column instead
+        rect = table.visualRect(table.model().index(row, Column.TEXT.value))
+        QTest.mouseClick(
+            table.viewport(), Qt.MouseButton.LeftButton, modifiers, rect.center()
+        )
+
+    def test_shift_click_from_top_to_bottom_selects_the_range(
+            self, qtbot: QtBot, table
+    ):
+        self.click(table, 0)
+        self.click(table, 2, Qt.KeyboardModifier.ShiftModifier)
+
+        assert table.selected_rows() == [0, 1, 2]
+        assert table.user_selected_rows() == [0, 1, 2]
+
+    def test_shift_click_from_bottom_to_top_selects_the_range(
+            self, qtbot: QtBot, table
+    ):
+        self.click(table, 2)
+        self.click(table, 0, Qt.KeyboardModifier.ShiftModifier)
+
+        assert table.selected_rows() == [0, 1, 2]
+
+    def test_ctrl_click_selects_rows_one_by_one(self, qtbot: QtBot, table):
+        self.click(table, 0)
+        self.click(table, 2, Qt.KeyboardModifier.ControlModifier)
+
+        assert table.selected_rows() == [0, 2]
+
+    def test_ctrl_click_on_a_selected_row_deselects_it(self, qtbot: QtBot, table):
+        self.click(table, 0)
+        self.click(table, 2, Qt.KeyboardModifier.ControlModifier)
+        self.click(table, 2, Qt.KeyboardModifier.ControlModifier)
+
+        assert table.selected_rows() == [0]
+
+    def test_ctrl_shift_click_adds_a_range(self, qtbot: QtBot, table):
+        self.click(table, 2)
+        self.click(table, 0, Qt.KeyboardModifier.ControlModifier)
+        self.click(
+            table, 1,
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+        )
+
+        assert table.selected_rows() == [0, 1, 2]
+
+    def test_highlighting_does_not_overwrite_the_user_selection(
+            self, qtbot: QtBot, table
+    ):
+        """Playback keeps highlighting rows, the picked rows must survive it"""
+        self.click(table, 0)
+        self.click(table, 2, Qt.KeyboardModifier.ShiftModifier)
+
+        table.highlight_and_scroll_to_row(1)
+
+        assert table.user_selected_rows() == [0, 1, 2]
+
+    def test_scroll_to_row_keeps_a_multi_row_selection(self, qtbot: QtBot, table):
+        self.click(table, 0)
+        self.click(table, 2, Qt.KeyboardModifier.ShiftModifier)
+
+        table.scroll_to_row(2)
+
+        assert table.selected_rows() == [0, 1, 2]
+
+    def test_clicking_the_empty_area_clears_the_user_selection(
+            self, qtbot: QtBot, table
+    ):
+        self.click(table, 0)
+        self.click(table, 2, Qt.KeyboardModifier.ShiftModifier)
+
+        QTest.mouseClick(
+            table.viewport(), Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            QPoint(10, table.viewport().height() - 5),
+        )
+
+        assert table.user_selected_rows() == []

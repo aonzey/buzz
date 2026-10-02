@@ -20,12 +20,32 @@ DEFAULT_WHISPER_TEMPERATURE = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
 class Task(enum.Enum):
     TRANSLATE = "translate"
     TRANSCRIBE = "transcribe"
+    # Transcribe with the source language and then run the AI translation on
+    # the resulting segments. Only exposed on the command line: the GUI drives
+    # translation from the transcription viewer instead.
+    TRANSCRIBE_TRANSLATE = "transcribe&translate"
 
 
 TASK_LABEL_TRANSLATIONS = {
     Task.TRANSLATE: _("Translate to English"),
     Task.TRANSCRIBE: _("Transcribe"),
 }
+
+
+def effective_whisper_task(task: "Task") -> str:
+    """Return the value Whisper itself understands for ``task``.
+
+    Whisper only knows about ``transcribe`` and ``translate``, so the combined
+    CLI-only task falls back to plain transcription.
+    """
+    if task == Task.TRANSLATE:
+        return Task.TRANSLATE.value
+    return Task.TRANSCRIBE.value
+
+
+# ``write_output`` segment key that emits each block as its text followed by
+# its translation on the next line.
+TEXT_TRANSLATION_SEGMENT_KEY = "text_translation"
 
 
 @dataclass
@@ -173,6 +193,9 @@ class FileTranscriptionOptions:
     file_paths: Optional[List[str]] = None
     url: Optional[str] = None
     output_formats: Set["OutputFormat"] = field(default_factory=set)
+    # Set by the command line "transcribe&translate" task: run the AI
+    # translation right after transcribing and export text + translation.
+    text_with_translation: bool = False
 
 
 @dataclass_json

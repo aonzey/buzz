@@ -3,8 +3,9 @@ from tempfile import mkdtemp
 
 import pytest
 from pytestqt.qtbot import QtBot
+from PyQt6.QtCore import QCommandLineParser
 
-from buzz.cli import parse_command_line
+from buzz.cli import _add_command_options, parse_command_line
 from tests.audio import test_audio_path, test_multibyte_utf8_audio_path
 
 
@@ -47,3 +48,12 @@ class TestCLI:
             assert len(outputs) == 2
 
         qtbot.wait_until(all_outputs_exist, timeout=5 * 60 * 1000)
+
+
+class TestCommandLineOptions:
+    def test_proxy_option_is_available(self):
+        parser = QCommandLineParser()
+        opts = _add_command_options(parser)
+
+        assert "proxy" in opts
+        assert "--proxy" in parser.helpText()

@@ -18,6 +18,7 @@ from buzz.transcriber.transcriber import (
     get_output_file_path,
     Segment,
     OutputFormat,
+    TEXT_TRANSLATION_SEGMENT_KEY,
 )
 
 app_env = os.environ.copy()
@@ -74,6 +75,17 @@ class FileTranscriber(QObject):
         for segment in segments:
             segment.text = segment.text.strip()
 
+        # Combined "transcribe&translate" runs: fill in the translations before
+        # the segments are announced, so both the database and the exported
+        # files carry the translated text.
+        text_with_translation = getattr(
+            self.transcription_task.file_transcription_options,
+            "text_with_translation",
+            False,
+        )
+        if text_with_translation:
+            self._translate_segments(segments)
+
         if self.transcription_task.identify_speakers:
             segments = self._identify_speakers(segments)
 
@@ -101,7 +113,66 @@ class FileTranscriber(QObject):
             )
 
             write_output(
-                path=default_path, segments=segments, output_format=output_format
+                path=default_path,
+                segments=segments,
+                output_format=output_format,
+                segment_key=TEXT_TRANSLATION_SEGMENT_KEY
+                if text_with_translation
+                else "text",
+            )
+
+    def _translate_segments(self, segments: List[Segment]) -> None:
+        """Translate the transcribed segments in place with the configured LLM.
+
+        Runs on the worker thread, so the blocking API calls are fine here.
+        """
+        from buzz.translator import translate_texts
+
+        options = self.transcription_task.transcription_options
+        if not options.llm_model or not options.llm_prompt:
+            logging.warning(
+                "Text+Translation requested but no AI model/prompt is configured, "
+                "exporting text only"
+            )
+            return
+
+        texts = [segment.text for segment in segments]
+        total = len(texts)
+        logging.debug(
+            "Translating %s segments with model %s", total, options.llm_model
+        )
+
+        print(
+            f"Translating {total} segment(s) with {options.llm_model}...",
+            flush=True,
+        )
+
+        def on_translation_progress(done: int, total_segments: int):
+            print(f"Translated {done}/{total_segments}", flush=True)
+
+        translations = translate_texts(
+            texts,
+            options.llm_model,
+            options.llm_prompt,
+            on_progress=on_translation_progress,
+        )
+
+        failed = 0
+        for segment, translation in zip(segments, translations):
+            segment.translation = (translation or "").strip()
+            if not segment.translation:
+                failed += 1
+
+        succeeded = total - failed
+        if failed:
+            print(
+                f"Translation finished: {succeeded} succeeded, {failed} failed",
+                flush=True,
+            )
+        else:
+            print(
+                f"Translation finished: all {succeeded} segment(s) succeeded",
+                flush=True,
             )
 
     def _identify_speakers(self, segments: List[Segment]) -> List[Segment]:
@@ -265,23 +336,24 @@ def write_output(
 
     with open(os.fsencode(path), "w", encoding="utf-8") as file:
         def segment_content(segment):
-            content = getattr(segment, segment_key).strip()
+            if segment_key == TEXT_TRANSLATION_SEGMENT_KEY:
+                # Text+Translation: the block's text and its translation, the
+                # translation on the line right below the text.
+                text = (getattr(segment, "text", "") or "").strip()
+                translation = (getattr(segment, "translation", "") or "").strip()
+                content = f"{text}\n{translation}" if translation else text
+            else:
+                content = getattr(segment, segment_key).strip()
             speaker = getattr(segment, "speaker", "").strip()
             return f"{speaker}: {content}" if speaker else content
 
         if output_format == OutputFormat.TXT:
-            combined_text = ""
-            previous_end_time = None
-
-            paragraph_split_time = int(os.getenv("BUZZ_PARAGRAPH_SPLIT_TIME", "2000"))
-            
+            # One time block per line: blocks are separated by a line break
+            # instead of being joined with spaces, so blocks carrying a
+            # translation (text on one line, translation on the next) stay
+            # readable in a plain text file.
             for segment in segments:
-                if previous_end_time is not None and (segment.start - previous_end_time) >= paragraph_split_time:
-                    combined_text += "\n\n"
-                combined_text += segment_content(segment) + " "
-                previous_end_time = segment.end
-
-            file.write(combined_text)
+                file.write(segment_content(segment) + "\n")
 
         elif output_format == OutputFormat.VTT:
             file.write("WEBVTT\n\n")

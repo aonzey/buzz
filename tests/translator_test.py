@@ -1,3 +1,4 @@
+import threading
 import time
 import pytest
 from queue import Empty
@@ -5,7 +6,7 @@ from unittest.mock import Mock, patch, create_autospec
 
 from PyQt6.QtCore import QThread
 
-from buzz.translator import Translator
+from buzz.translator import Translator, translate_texts
 from buzz.transcriber.transcriber import TranscriptionOptions
 from buzz.widgets.transcriber.advanced_settings_dialog import AdvancedSettingsDialog
 from buzz.locale import _
@@ -168,3 +169,92 @@ class TestTranslator:
 
         # Note: translator and translation_thread will be automatically deleted
         # via the deleteLater() connections set up earlier
+
+
+class TestTranslateTexts:
+    @patch("buzz.translator.OpenAI", autospec=True)
+    def test_reports_progress_and_failures(self, mock_openai, qtbot):
+        """The headless helper reports (done, total) and returns "" on failure"""
+        mock_chat = Mock()
+        mock_openai.return_value.chat = mock_chat
+        mock_chat.completions.create.side_effect = [
+            Mock(choices=[Mock(message=Mock(content="[1] Un\n[2] "))]),
+            Mock(choices=[Mock(message=Mock(content="Deux"))]),
+        ]
+
+        progress = []
+        results = translate_texts(
+            ["One", "Two", "Three"],
+            model="llama3",
+            prompt="Translate:",
+            batch_size=2,
+            on_progress=lambda done, total: progress.append((done, total)),
+        )
+
+        assert results == ["Un", "", "Deux"]
+        assert progress == [(2, 3), (3, 3)]
+
+
+class TestTranslatorPauseControl:
+    """Pausing, resuming and cancelling the translation queue"""
+
+    @staticmethod
+    def build_translator():
+        with patch("buzz.translator.OpenAI", autospec=True):
+            transcription_options = TranscriptionOptions(
+                enable_llm_translation=False,
+                llm_model="llama3",
+                llm_prompt="Please translate this text:",
+            )
+            return Translator(
+                transcription_options,
+                AdvancedSettingsDialog(
+                    transcription_options=transcription_options, parent=None
+                ),
+            )
+
+    def test_pause_and_resume_flag(self):
+        translator = self.build_translator()
+
+        assert not translator.is_paused()
+        translator.pause()
+        assert translator.is_paused()
+        translator.resume()
+        assert not translator.is_paused()
+
+    def test_clear_queue_drops_pending_segments(self):
+        translator = self.build_translator()
+        translator.enqueue("one", 1)
+        translator.enqueue("two", 2)
+
+        translator.clear_queue()
+
+        assert translator.queue.empty()
+
+    def test_cancel_resumes_and_drops_pending_segments(self):
+        """A cancelled translation must not leave the worker paused"""
+        translator = self.build_translator()
+        translator.pause()
+        translator.enqueue("one", 1)
+
+        translator.cancel()
+
+        assert not translator.is_paused()
+        assert translator.queue.empty()
+
+    def test_worker_blocks_while_paused(self):
+        translator = self.build_translator()
+        translator.pause()
+
+        resumed = threading.Event()
+        worker = threading.Thread(
+            target=lambda: (translator._wait_while_paused(), resumed.set())
+        )
+        worker.start()
+        try:
+            assert not resumed.wait(0.3)
+            translator.resume()
+            assert resumed.wait(5)
+        finally:
+            translator.resume()
+            worker.join(5)

@@ -1067,6 +1067,66 @@ msgstr "文本"
 msgid "Translation"
 msgstr "翻译"
 
+#: buzz/widgets/transcription_viewer/export_transcription_menu.py
+msgid "Text+Translation"
+msgstr "文本+翻译"
+
+#: buzz/widgets/transcription_viewer/transcription_viewer_widget.py
+msgid "Translating..."
+msgstr "正在翻译..."
+
+#: buzz/widgets/transcription_viewer/transcription_viewer_widget.py
+msgid "Translating"
+msgstr "正在翻译"
+
+#: buzz/widgets/transcription_viewer/transcription_viewer_widget.py
+msgid "Translation finished"
+msgstr "翻译完成"
+
+#: buzz/widgets/transcription_viewer/transcription_viewer_widget.py
+msgid "Translates every segment, or only the rows you selected"
+msgstr "翻译全部字幕，或在有选中行时只翻译选中的行"
+
+#: buzz/widgets/transcription_viewer/transcription_viewer_widget.py
+msgid "Stop Translation"
+msgstr "停止翻译"
+
+#: buzz/widgets/transcription_viewer/transcription_viewer_widget.py
+msgid "Continue Translation"
+msgstr "继续翻译"
+
+#: buzz/widgets/transcription_viewer/transcription_viewer_widget.py
+msgid "Translation paused"
+msgstr "翻译已暂停"
+
+#: buzz/widgets/transcription_viewer/transcription_viewer_widget.py
+msgid "Translation stopped"
+msgstr "翻译已停止"
+
+#: buzz/widgets/transcription_viewer/transcription_viewer_widget.py
+msgid "failed"
+msgstr "段失败"
+
+#: buzz/widgets/transcription_viewer/transcription_viewer_widget.py
+msgid "Translation finished. All segments were translated successfully."
+msgstr "翻译完成，全部段落均已成功翻译。"
+
+#: buzz/widgets/transcription_viewer/transcription_viewer_widget.py
+msgid ""
+"Translation finished with errors. %(failed)s of %(total)s segments could not "
+"be translated. Check the logs for details."
+msgstr "翻译完成但存在错误：%(total)s 段中有 %(failed)s 段未能翻译。详情请查看日志。"
+
+#: buzz/widgets/preferences_dialog/general_preferences_widget.py
+msgid "Proxy"
+msgstr "代理"
+
+#: buzz/widgets/preferences_dialog/general_preferences_widget.py
+msgid ""
+"Proxy used for model downloads, URL imports and AI translation. Leave empty "
+"to use the system proxy settings."
+msgstr "用于模型下载、链接导入和 AI 翻译的代理。留空则使用系统代理设置。"
+
 #: buzz/widgets/transcription_viewer/transcription_segments_editor_widget.py
 msgid ""
 "Double-click to edit. Select multiple rows and right-click to assign "

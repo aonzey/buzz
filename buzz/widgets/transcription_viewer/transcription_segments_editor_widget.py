@@ -10,6 +10,7 @@ from PyQt6.QtCore import (
     Qt,
     QModelIndex,
     QItemSelection,
+    QItemSelectionModel,
     QRegularExpression,
     QSize,
 )
@@ -388,6 +389,14 @@ class TranscriptionSegmentsEditorWidget(QTableView):
                 event.accept()
                 return
         super().keyPressEvent(event)
+        # Keyboard navigation (arrows, Shift+arrows, Ctrl+A, ...) also counts
+        # as a selection the user made on purpose. Shift keeps the anchor so
+        # the next Shift+click keeps extending from where the range started.
+        if not event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            current_index = self.currentIndex()
+            if current_index.isValid():
+                self._selection_anchor_row = current_index.row()
+        self._record_user_selection()
 
     def __init__(
             self,
@@ -399,6 +408,13 @@ class TranscriptionSegmentsEditorWidget(QTableView):
 
         self._last_highlighted_row = -1
         self._bulk_updating_speakers = False
+        # Row the next Shift+click extends from, kept separate from Qt's own
+        # current index because highlighting code moves it around
+        self._selection_anchor_row = -1
+        # Rows the user picked with the mouse/keyboard. Rows highlighted by
+        # playback or search are not "the user's selection".
+        self._user_selection_rows: list[int] = []
+        self._programmatic_selection = False
         self.has_speakers = False
         self.translator = translator
         self.translator.translation.connect(self.update_translation)
@@ -531,8 +547,93 @@ class TranscriptionSegmentsEditorWidget(QTableView):
     def on_selection_changed(
         self, selected: QItemSelection, _deselected: QItemSelection
     ):
+        self._record_user_selection()
         if selected.indexes():
             self.segment_selected.emit(self.segment(selected.indexes()[0]))
+
+    def mousePressEvent(self, event):
+        """Support Shift (range) and Ctrl (jump) multi row selection.
+
+        Qt already implements both, but the result is applied on top of
+        whatever Qt decided, so a click can never be applied twice.
+        """
+        index = self.indexAt(event.position().toPoint())
+        is_left_click = event.button() == Qt.MouseButton.LeftButton
+        modifiers = event.modifiers() & (
+            Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier
+        )
+        was_selected = (
+            index.isValid() and self.selectionModel().isRowSelected(index.row())
+        )
+
+        super().mousePressEvent(event)
+
+        if is_left_click and index.isValid() and modifiers:
+            self._apply_modifier_selection(index.row(), modifiers, was_selected)
+            self._record_user_selection()
+        elif is_left_click and index.isValid():
+            self._selection_anchor_row = index.row()
+            self._record_user_selection()
+        elif is_left_click:
+            # Clicked the empty area below the last row, nothing is selected
+            self._selection_anchor_row = -1
+            self._user_selection_rows = []
+
+        self.viewport().update()
+
+    def _apply_modifier_selection(
+        self, row: int, modifiers: Qt.KeyboardModifier, was_selected: bool
+    ) -> None:
+        selection_model = self.selectionModel()
+        model = self.model()
+        if selection_model is None or model is None:
+            return
+
+        with_shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+        with_control = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+
+        if with_shift:
+            anchor = self._selection_anchor_row
+            if not 0 <= anchor < model.rowCount():
+                anchor = selection_model.currentIndex().row()
+            if anchor < 0:
+                anchor = row
+
+            flags = QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+            if not with_control:
+                flags |= QItemSelectionModel.SelectionFlag.Clear
+
+            top = min(anchor, row)
+            bottom = max(anchor, row)
+            selection_model.select(
+                QItemSelection(
+                    model.index(top, 0),
+                    model.index(bottom, model.columnCount() - 1),
+                ),
+                flags,
+            )
+        elif with_control:
+            flags = QItemSelectionModel.SelectionFlag.Rows | (
+                QItemSelectionModel.SelectionFlag.Deselect
+                if was_selected
+                else QItemSelectionModel.SelectionFlag.Select
+            )
+            selection_model.select(model.index(row, 0), flags)
+            self._selection_anchor_row = row
+
+        selection_model.setCurrentIndex(
+            model.index(row, 0), QItemSelectionModel.SelectionFlag.NoUpdate
+        )
+
+    def _record_user_selection(self):
+        """Remember the rows the user selected, ignoring automatic highlighting."""
+        if self._programmatic_selection:
+            return
+        self._user_selection_rows = self.selected_rows()
+
+    def user_selected_rows(self) -> list[int]:
+        """Rows the user selected on purpose, empty when nothing is selected."""
+        return list(self._user_selection_rows)
 
     def segment(self, index: QModelIndex) -> QSqlRecord:
         return self.model().record(index.row())
@@ -615,6 +716,8 @@ class TranscriptionSegmentsEditorWidget(QTableView):
         if index.isValid() and index.row() not in self.selected_rows():
             self.clearSelection()
             self.selectRow(index.row())
+            self._selection_anchor_row = index.row()
+            self._record_user_selection()
 
         rows = self.selected_rows()
         menu = QMenu(self)
@@ -689,8 +792,29 @@ class TranscriptionSegmentsEditorWidget(QTableView):
                 self.setFocus()
                 self._last_highlighted_row = row_index
             
-            # Select the row
-            self.selectRow(row_index)
+            # Select the row. Marked as programmatic so it does not overwrite
+            # the selection the user made.
+            self._programmatic_selection = True
+            try:
+                self.selectRow(row_index)
+            finally:
+                self._programmatic_selection = False
+            self._selection_anchor_row = row_index
             # Scroll to the row with better positioning
             model_index = self.model().index(row_index, 0)
             self.scrollTo(model_index, QAbstractItemView.ScrollHint.PositionAtCenter)
+
+    def scroll_to_row(self, row_index: int):
+        """Scroll a row into view without touching the selection.
+
+        Used where the selection was already set by whoever triggered the
+        change (for example a mouse click), re-selecting would collapse a
+        multi row selection back to a single row.
+        """
+        if not 0 <= row_index < self.model().rowCount():
+            return
+        self._last_highlighted_row = row_index
+        self.scrollTo(
+            self.model().index(row_index, 0),
+            QAbstractItemView.ScrollHint.PositionAtCenter,
+        )

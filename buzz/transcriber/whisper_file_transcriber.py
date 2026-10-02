@@ -28,7 +28,13 @@ from buzz.conn import pipe_stderr
 from buzz.model_loader import ModelType, map_language_to_mms
 from buzz.transformers_whisper import TransformersTranscriber
 from buzz.transcriber.file_transcriber import FileTranscriber
-from buzz.transcriber.transcriber import FileTranscriptionTask, Segment, Task, DEFAULT_WHISPER_TEMPERATURE
+from buzz.transcriber.transcriber import (
+    FileTranscriptionTask,
+    Segment,
+    Task,
+    DEFAULT_WHISPER_TEMPERATURE,
+    effective_whisper_task,
+)
 from buzz.transcriber.whisper_cpp import WhisperCpp
 
 import av
@@ -304,7 +310,7 @@ class WhisperFileTranscriber(FileTranscriber):
                 if task.transcription_options.language is not None
                 else "en"
             )
-            effective_task = task.transcription_options.task.value
+            effective_task = effective_whisper_task(task.transcription_options.task)
             word_timestamps = task.transcription_options.word_level_timings
 
         initial_prompt = "" if model.is_mms_model else (task.transcription_options.initial_prompt or "")
@@ -375,7 +381,7 @@ class WhisperFileTranscriber(FileTranscriber):
         whisper_segments, info = batched_model.transcribe(
             audio=audio,
             language=task.transcription_options.language,
-            task=task.transcription_options.task.value,
+            task=effective_whisper_task(task.transcription_options.task),
             # Prevent crash on Windows https://github.com/SYSTRAN/faster-whisper/issues/71#issuecomment-1526263764
             temperature = 0 if platform.system() == "Windows" else DEFAULT_WHISPER_TEMPERATURE,
             initial_prompt=task.transcription_options.initial_prompt,
@@ -436,7 +442,7 @@ class WhisperFileTranscriber(FileTranscriber):
             result: WhisperResult = model.transcribe(
                 audio=whisper_audio.load_audio(task.file_path),
                 language=task.transcription_options.language,
-                task=task.transcription_options.task.value,
+                task=effective_whisper_task(task.transcription_options.task),
                 temperature=DEFAULT_WHISPER_TEMPERATURE,
                 initial_prompt=task.transcription_options.initial_prompt,
                 no_speech_threshold=0.4,
@@ -456,7 +462,7 @@ class WhisperFileTranscriber(FileTranscriber):
         result: dict = model.transcribe(
             audio=whisper_audio.load_audio(task.file_path),
             language=task.transcription_options.language,
-            task=task.transcription_options.task.value,
+            task=effective_whisper_task(task.transcription_options.task),
             temperature=task.transcription_options.temperature,
             initial_prompt=task.transcription_options.initial_prompt,
             verbose=False,

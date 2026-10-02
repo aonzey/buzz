@@ -9,6 +9,7 @@ from PyQt6.QtGui import QColor, QFont, QPalette, QTextCharFormat, QTextCursor
 from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtSql import QSqlRecord
 from PyQt6.QtWidgets import (
+    QDialog,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -16,6 +17,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMessageBox,
     QLineEdit,
+    QProgressBar,
     QPushButton,
     QFrame,
     QCheckBox,
@@ -23,7 +25,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
-    QSplitter
+    QSplitter,
 )
 
 from buzz.locale import _
@@ -74,6 +76,84 @@ if not (platform.system() == "Darwin" and platform.machine() == "x86_64"):
     from buzz.widgets.transcription_viewer.speaker_identification_widget import SpeakerIdentificationWidget
 
 
+class TranslationProgressDialog(QDialog):
+    """Progress window shown while segments are being translated.
+
+    The button pauses the translation and turns into a resume button.
+    Closing the window (title bar button, Esc, ...) aborts the translation.
+    """
+
+    stop_requested = pyqtSignal()
+    aborted = pyqtSignal()
+
+    def __init__(self, total: int, parent: Optional["QWidget"] = None):
+        super().__init__(parent)
+        self._abort_signals_muted = False
+        self._paused = False
+        self._progress_text = ""
+
+        self.setObjectName("translation_progress_dialog")
+        self.setWindowTitle(_("Translating"))
+        self.setWindowModality(Qt.WindowModality.WindowModal)
+        self.setMinimumWidth(340)
+
+        layout = QVBoxLayout(self)
+
+        self.status_label = QLabel(_("Translating..."), self)
+        self.status_label.setObjectName("translation_progress_status_label")
+        layout.addWidget(self.status_label)
+
+        self.progress_bar = QProgressBar(self)
+        self.progress_bar.setObjectName("translation_progress_bar")
+        self.progress_bar.setRange(0, max(total, 1))
+        self.progress_bar.setValue(0)
+        layout.addWidget(self.progress_bar)
+
+        buttons_layout = QHBoxLayout()
+        buttons_layout.addStretch()
+
+        self.stop_button = QPushButton(_("Stop Translation"), self)
+        self.stop_button.setObjectName("translation_stop_button")
+        self.stop_button.clicked.connect(self.stop_requested.emit)
+        buttons_layout.addWidget(self.stop_button)
+
+        layout.addLayout(buttons_layout)
+
+    def set_progress(self, done: int, total: int):
+        self.progress_bar.setRange(0, max(total, 1))
+        self.progress_bar.setValue(min(done, total))
+        self._progress_text = f"{_('Translating')} {done}/{total}"
+        if not self.is_paused():
+            self.status_label.setText(self._progress_text)
+
+    def set_paused(self, paused: bool):
+        self._paused = paused
+        self.stop_button.setText(
+            _("Continue Translation") if paused else _("Stop Translation")
+        )
+        if paused:
+            self.status_label.setText(_("Translation paused"))
+        else:
+            self.status_label.setText(self._progress_text)
+
+    def is_paused(self) -> bool:
+        return self._paused
+
+    def mute_abort_signals(self):
+        """Close the window without telling the owner to abort."""
+        self._abort_signals_muted = True
+
+    def closeEvent(self, event):
+        if not self._abort_signals_muted:
+            self.aborted.emit()
+        super().closeEvent(event)
+
+    def reject(self):
+        if not self._abort_signals_muted:
+            self.aborted.emit()
+        super().reject()
+
+
 class TranscriptionViewerWidget(QWidget):
     AUDIO_PLAYER_MAX_HEIGHT = 80
     resize_button_clicked = pyqtSignal()
@@ -105,6 +185,13 @@ class TranscriptionViewerWidget(QWidget):
         self.translation_thread = None
         self.translator = None
         self.translation_requested = False
+        self.translation_in_progress = False
+        self.translation_paused = False
+        self.translation_total = 0
+        self.translation_done = 0
+        self.translation_failed = 0
+        self.translation_progress_dialog = None
+        self.translation_result_message_box = None
         self.view_mode = ViewMode.TIMESTAMPS
 
         self._init_search_debounce()
@@ -171,6 +258,10 @@ class TranscriptionViewerWidget(QWidget):
         self.translator.moveToThread(self.translation_thread)
         self.translation_thread.started.connect(self.translator.start)
         self.translation_thread.start()
+
+        # The signal is emitted from the translator thread, Qt marshals the
+        # slot onto this widget's thread.
+        self.translator.translation.connect(self.on_translation_progress)
 
     def _setup_table_widget(self):
         self.table_widget = TranscriptionSegmentsEditorWidget(
@@ -314,8 +405,18 @@ class TranscriptionViewerWidget(QWidget):
         translate_button.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
+        translate_button.setToolTip(
+            _("Translates every segment, or only the rows you selected")
+        )
         translate_button.clicked.connect(self.on_translate_button_clicked)
         toolbar.addWidget(translate_button)
+
+        self.translation_status_label = QLabel("", self)
+        self.translation_status_label.setObjectName("translation_status_label")
+        self.translation_status_label.setVisible(False)
+        self.translation_status_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        toolbar.addWidget(self.translation_status_label)
 
         resize_button = QToolButton()
         resize_button.setText(_("Resize"))
@@ -1386,7 +1487,9 @@ class TranscriptionViewerWidget(QWidget):
         else:
             row = self.table_widget.find_segment_row_by_id(segment.value("id"))
             if row != -1:
-                self.table_widget.highlight_and_scroll_to_row(row)
+                # Scroll only: re-selecting the row here would collapse a
+                # multi row selection (Shift/Ctrl click) back to one row
+                self.table_widget.scroll_to_row(row)
 
     def on_timestamp_being_edited(self, row: int, column: int, new_value_ms: int):
         """Handle real-time timestamp editing to update loop range immediately"""
@@ -1554,11 +1657,167 @@ class TranscriptionViewerWidget(QWidget):
         self.save_preferences()
 
         segments = self.table_widget.segments()
-        logging.debug(
-            f"Queueing {len(segments)} segments for translation "
-            f"with model {self.transcription_options.llm_model}")
+        selected_rows = self.table_widget.user_selected_rows()
+        if selected_rows:
+            segments = [
+                segments[row]
+                for row in selected_rows
+                if 0 <= row < len(segments)
+            ]
+            logging.debug(
+                f"Queueing {len(segments)} selected segments for translation "
+                f"with model {self.transcription_options.llm_model}")
+        else:
+            logging.debug(
+                f"Queueing {len(segments)} segments for translation "
+                f"with model {self.transcription_options.llm_model}")
+
         for segment in segments:
             self.translator.enqueue(segment.value("text"), segment.value("id"))
+
+        self._start_translation_progress(len(segments))
+
+    def _start_translation_progress(self, total: int):
+        self.translation_in_progress = total > 0
+        self.translation_paused = False
+        self.translation_total = total
+        self.translation_done = 0
+        self.translation_failed = 0
+
+        if total == 0:
+            self.translation_status_label.setVisible(False)
+            return
+
+        self.translation_status_label.setVisible(True)
+        self.translation_status_label.setText(self._translation_progress_text())
+
+        dialog = TranslationProgressDialog(total, self)
+        dialog.set_progress(0, total)
+        dialog.stop_requested.connect(self.on_translation_stop_requested)
+        dialog.aborted.connect(self.on_translation_aborted)
+        dialog.show()
+
+        self.translation_progress_dialog = dialog
+
+    def _close_translation_dialog(self):
+        dialog = self.translation_progress_dialog
+        self.translation_progress_dialog = None
+        if dialog is None:
+            return
+        dialog.mute_abort_signals()
+        dialog.close()
+        dialog.deleteLater()
+
+    def on_translation_stop_requested(self):
+        """Pause the translation, or continue it when already paused."""
+        if not self.translation_in_progress:
+            return
+
+        self.translation_paused = not self.translation_paused
+        if self.translation_paused:
+            self.translator.pause()
+        else:
+            self.translator.resume()
+
+        if self.translation_progress_dialog is not None:
+            self.translation_progress_dialog.set_paused(self.translation_paused)
+
+        if self.translation_paused:
+            self.translation_status_label.setText(
+                f"{_('Translation paused')} "
+                f"{self.translation_done}/{self.translation_total}"
+            )
+        else:
+            self.translation_status_label.setText(
+                self._translation_progress_text()
+            )
+
+    def on_translation_aborted(self):
+        """The progress window was closed, stop translating for good."""
+        if not self.translation_in_progress:
+            return
+
+        logging.debug("Translation stopped by the user")
+        self.translator.cancel()
+        self.translation_in_progress = False
+        self.translation_paused = False
+        self._close_translation_dialog()
+        self.translation_status_label.setText(
+            f"{_('Translation stopped')} "
+            f"{self.translation_done}/{self.translation_total}"
+        )
+
+    def _translation_progress_text(self) -> str:
+        return (
+            f"{_('Translating')} {self.translation_done}/{self.translation_total}"
+        )
+
+    def on_translation_progress(self, translation: str, transcript_id: int):
+        if not self.translation_in_progress:
+            return
+
+        self.translation_done += 1
+        if not (translation or "").strip():
+            self.translation_failed += 1
+
+        if self.translation_paused:
+            self.translation_status_label.setText(
+                f"{_('Translation paused')} "
+                f"{self.translation_done}/{self.translation_total}"
+            )
+        else:
+            self.translation_status_label.setText(
+                self._translation_progress_text()
+            )
+
+        if self.translation_progress_dialog is not None:
+            self.translation_progress_dialog.set_progress(
+                min(self.translation_done, self.translation_total),
+                self.translation_total,
+            )
+
+        if self.translation_done >= self.translation_total:
+            self._finish_translation_progress()
+
+    def _finish_translation_progress(self):
+        self.translation_in_progress = False
+        self.translation_paused = False
+
+        self._close_translation_dialog()
+
+        succeeded = self.translation_total - self.translation_failed
+        self.translation_status_label.setText(
+            f"{_('Translation finished')}: {succeeded}/{self.translation_total}"
+            + (f" ({self.translation_failed} {_('failed')})"
+               if self.translation_failed else "")
+        )
+
+        if succeeded > 0:
+            self.has_translations = True
+
+        if self.translation_failed == 0:
+            icon = QMessageBox.Icon.Information
+            message = _(
+                "Translation finished. All segments were translated successfully."
+            )
+        else:
+            icon = QMessageBox.Icon.Warning
+            message = _(
+                "Translation finished with errors. %(failed)s of %(total)s segments "
+                "could not be translated. Check the logs for details."
+            ) % {"failed": self.translation_failed, "total": self.translation_total}
+
+        # Shown non blocking: the translation finishes on a worker thread and
+        # must never freeze the window it belongs to.
+        message_box = QMessageBox(icon, _("Translation"), message, parent=self)
+        message_box.setObjectName("translation_result_message_box")
+        message_box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        message_box.finished.connect(self._on_translation_result_closed)
+        self.translation_result_message_box = message_box
+        message_box.open()
+
+    def _on_translation_result_closed(self, _result: int):
+        self.translation_result_message_box = None
 
     def on_resize_button_clicked(self):
         self.transcription_resizer_dialog = TranscriptionResizerWidget(
@@ -1732,6 +1991,18 @@ class TranscriptionViewerWidget(QWidget):
         if self.speaker_identification_dialog:
             self.speaker_identification_dialog.close()
 
+        self.translation_in_progress = False
+        self.translation_paused = False
+
+        self._close_translation_dialog()
+
+        if self.translation_result_message_box is not None:
+            self.translation_result_message_box.close()
+            self.translation_result_message_box = None
+
+        # A paused worker would never reach the stop sentinel below
+        self.translator.resume()
+        self.translator.cancel()
         self.translator.stop()
         self.translation_thread.quit()
 

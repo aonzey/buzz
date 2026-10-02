@@ -13,6 +13,7 @@ from buzz.transcriber.docx_writer import write_speaker_docx
 from buzz.transcriber.transcriber import (
     OutputFormat,
     Segment,
+    TEXT_TRANSLATION_SEGMENT_KEY,
 )
 
 
@@ -34,6 +35,7 @@ class ExportTranscriptionMenu(QMenu):
 
         text_label = _("Text")
         translation_label = _("Translation")
+        text_translation_label = _("Text+Translation")
         self.text_actions = [
             QAction(text=f"{output_format.value.upper()} - {text_label}", parent=self)
             for output_format in OutputFormat
@@ -44,7 +46,21 @@ class ExportTranscriptionMenu(QMenu):
         ]
         for action in self.translation_actions:
             action.setVisible(has_translation)
-        actions = self.text_actions + self.translation_actions
+        # Text+Translation exports are only offered once every segment has been
+        # translated, otherwise the file would mix translated and untranslated
+        # blocks.
+        self.text_translation_actions = [
+            QAction(
+                text=f"{output_format.value.upper()} - {text_translation_label}",
+                parent=self,
+            )
+            for output_format in OutputFormat
+        ]
+        actions = (
+            self.text_actions
+            + self.translation_actions
+            + self.text_translation_actions
+        )
         self.addActions(actions)
 
         self.addSeparator()
@@ -54,7 +70,9 @@ class ExportTranscriptionMenu(QMenu):
         )
         self.addAction(self.speaker_docx_action)
         self.aboutToShow.connect(self._refresh_speaker_docx_action)
+        self.aboutToShow.connect(self._refresh_text_translation_actions)
         self._refresh_speaker_docx_action()
+        self._refresh_text_translation_actions()
         self.triggered.connect(self.on_menu_triggered)
 
     @staticmethod
@@ -62,13 +80,19 @@ class ExportTranscriptionMenu(QMenu):
         parts = action_text.split('-')
         output_format = parts[0].strip()
         label = parts[1].strip() if len(parts) > 1 else None
-        segment_key = 'translation' if label == _('Translation') else 'text'
+        if label == _('Translation'):
+            segment_key = 'translation'
+        elif label == _('Text+Translation'):
+            segment_key = TEXT_TRANSLATION_SEGMENT_KEY
+        else:
+            segment_key = 'text'
 
         return output_format, segment_key
 
     def on_translation_available(self):
         for action in self.translation_actions:
             action.setVisible(True)
+        self._refresh_text_translation_actions()
 
     def on_menu_triggered(self, action: QAction):
         if action == self.speaker_docx_action:
@@ -111,10 +135,25 @@ class ExportTranscriptionMenu(QMenu):
             segment_key=segment_key
         )
 
-    def _refresh_speaker_docx_action(self):
-        segments = self.transcription_service.get_transcription_segments(
+    def _segments(self):
+        return self.transcription_service.get_transcription_segments(
             transcription_id=self.transcription.id_as_uuid
         )
+
+    def _has_complete_translation(self) -> bool:
+        """True when the transcription has segments and every one is translated."""
+        segments = self._segments()
+        return len(segments) > 0 and all(
+            (segment.translation or "").strip() for segment in segments
+        )
+
+    def _refresh_text_translation_actions(self):
+        visible = self._has_complete_translation()
+        for action in self.text_translation_actions:
+            action.setVisible(visible)
+
+    def _refresh_speaker_docx_action(self):
+        segments = self._segments()
         self.speaker_docx_action.setEnabled(
             any((segment.speaker or "").strip() for segment in segments)
         )

@@ -207,6 +207,145 @@ class TestTranscriptionViewerTranslation:
 
         widget.close()
 
+    def test_translation_reports_progress_and_success(
+        self, qtbot: QtBot, transcription, transcription_service, shortcuts,
+        viewer_settings, openai_client
+    ):
+        """The viewer counts translated segments and reports the result"""
+        widget = self.open_viewer(
+            qtbot, transcription, transcription_service, shortcuts)
+
+        widget._start_translation_progress(2)
+
+        assert widget.translation_in_progress
+        assert widget.translation_total == 2
+        assert widget.translation_progress_dialog is not None
+        # isVisible() is False while the parent window is hidden, isHidden()
+        # reflects the state the widget itself was put into
+        assert not widget.translation_status_label.isHidden()
+        assert widget.translation_status_label.text().endswith("0/2")
+
+        widget.on_translation_progress("Pirmais", 1)
+        assert widget.translation_done == 1
+        assert widget.translation_failed == 0
+        assert widget.translation_status_label.text().endswith("1/2")
+
+        widget.on_translation_progress("Otrais", 2)
+
+        assert not widget.translation_in_progress
+        assert widget.translation_progress_dialog is None
+        assert widget.translation_status_label.text().endswith("2/2")
+        assert widget.has_translations
+        assert widget.translation_result_message_box is not None
+
+        widget.close()
+
+    def test_translation_reports_failures(
+        self, qtbot: QtBot, transcription, transcription_service, shortcuts,
+        viewer_settings, openai_client
+    ):
+        """An empty translation counts as a failed segment"""
+        widget = self.open_viewer(
+            qtbot, transcription, transcription_service, shortcuts)
+
+        widget._start_translation_progress(2)
+        widget.on_translation_progress("Pirmais", 1)
+        widget.on_translation_progress("", 2)
+
+        assert widget.translation_failed == 1
+        assert "1" in widget.translation_status_label.text()
+        assert widget.translation_result_message_box is not None
+
+        widget.close()
+
+    def test_translation_only_covers_the_selected_rows(
+        self, qtbot: QtBot, transcription, transcription_service, shortcuts,
+        viewer_settings, openai_client
+    ):
+        """Rows picked in the table are the only ones sent to the API"""
+        widget = self.open_viewer(
+            qtbot, transcription, transcription_service, shortcuts)
+
+        widget.transcription_options.llm_model = "llama3"
+        widget.transcription_options.llm_prompt = "Translate:"
+
+        with patch.object(
+            widget.table_widget, "user_selected_rows", return_value=[1]
+        ), patch.object(widget.translator, "enqueue") as enqueue:
+            widget.run_translation()
+
+        assert enqueue.call_count == 1
+        assert enqueue.call_args.args[0] == "Second segment"
+
+        widget.close()
+
+    def test_translation_covers_every_row_without_a_selection(
+        self, qtbot: QtBot, transcription, transcription_service, shortcuts,
+        viewer_settings, openai_client
+    ):
+        widget = self.open_viewer(
+            qtbot, transcription, transcription_service, shortcuts)
+
+        widget.transcription_options.llm_model = "llama3"
+        widget.transcription_options.llm_prompt = "Translate:"
+
+        with patch.object(
+            widget.table_widget, "user_selected_rows", return_value=[]
+        ), patch.object(widget.translator, "enqueue") as enqueue:
+            widget.run_translation()
+
+        assert enqueue.call_count == 2
+
+        widget.close()
+
+    def test_stop_button_pauses_and_continues_the_translation(
+        self, qtbot: QtBot, transcription, transcription_service, shortcuts,
+        viewer_settings, openai_client
+    ):
+        """The button pauses the work and turns into a continue button"""
+        widget = self.open_viewer(
+            qtbot, transcription, transcription_service, shortcuts)
+
+        widget._start_translation_progress(2)
+        dialog = widget.translation_progress_dialog
+
+        assert dialog.stop_button.text() == "Stop Translation"
+
+        dialog.stop_button.click()
+
+        assert widget.translation_paused
+        assert widget.translator.is_paused()
+        assert dialog.stop_button.text() == "Continue Translation"
+        assert "paused" in widget.translation_status_label.text()
+
+        dialog.stop_button.click()
+
+        assert not widget.translation_paused
+        assert not widget.translator.is_paused()
+        assert dialog.stop_button.text() == "Stop Translation"
+
+        widget.close()
+
+    def test_closing_the_progress_dialog_stops_the_translation(
+        self, qtbot: QtBot, transcription, transcription_service, shortcuts,
+        viewer_settings, openai_client
+    ):
+        """Closing the window drops the queued segments and reports it"""
+        widget = self.open_viewer(
+            qtbot, transcription, transcription_service, shortcuts)
+
+        widget._start_translation_progress(2)
+        widget.translator.enqueue("First segment", 1)
+        widget.translation_progress_dialog.close()
+
+        assert not widget.translation_in_progress
+        assert widget.translation_progress_dialog is None
+        assert widget.translation_status_label.text().startswith(
+            "Translation stopped")
+        assert widget.translator.queue.empty()
+
+        widget.close()
+
     def test_translation_settings_are_saved(
         self, qtbot: QtBot, transcription, transcription_service, shortcuts,
         viewer_settings, openai_client

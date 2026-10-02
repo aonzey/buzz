@@ -14,7 +14,8 @@ Usage: buzz add [options] [file url file...]
 
 Options:
   -t, --task <task>              The task to perform. Allowed: translate,
-                                 transcribe. Default: transcribe.
+                                 transcribe, transcribe&translate. Default:
+                                 transcribe.
   -m, --model-type <model-type>  Model type. Allowed: whisper, whispercpp,
                                  huggingface, fasterwhisper, openaiapi. Default:
                                  whisper.
@@ -71,6 +72,10 @@ Options:
   --srt                          Output result in an SRT file.
   --vtt                          Output result in a VTT file.
   --txt                          Output result in a TXT file.
+  --proxy <url>                  Proxy used for model downloads, URL imports
+                                 and AI translation. Example:
+                                 "http://127.0.0.1:7890". Defaults to the
+                                 proxy saved in Preferences.
   --hide-gui                     Hide the main application window.
   -h, --help                     Displays help on commandline options.
   --help-all                     Displays help including Qt specific options.
@@ -101,4 +106,25 @@ buzz add --model-type whispercpp --model-size small --srt --vtt presentation.mp4
 
 # Transcribe a YouTube video without opening the app window
 buzz add --txt --hide-gui https://www.youtube.com/watch?v=dQw4w9WgXcQ
+
+# Transcribe French audio and translate every segment with the AI model
+# configured in Preferences ("transcribe&translate" is CLI only). Exported
+# files contain the original text followed by its translation.
+buzz add --task "transcribe&translate" --srt interview-fr.mp3
+
+# Route model downloads, URL imports and AI translation through a proxy
+buzz add --proxy http://127.0.0.1:7890 --model-type whispercpp --srt talk.mp4
 ```
+
+### `transcribe&translate`
+
+`--task "transcribe&translate"` first transcribes in the source language and then
+translates every segment with the AI model configured in Preferences (see
+[Translations](./usage/3_translations.md)). Because the values are read from
+Preferences, both an AI model and its instructions must be saved before running
+the command, otherwise Buzz exits with an error.
+
+The task is command line only: the desktop app keeps offering `transcribe` and
+`translate`. When it is used, exported files write the original text first and
+its translation below it, the same layout as the **Text+Translation** export
+option in the transcription viewer.

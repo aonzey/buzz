@@ -210,7 +210,9 @@ class OpenAIWhisperAPIFileTranscriber(FileTranscriber):
                     **options,
                     language=self.transcription_task.transcription_options.language,
                 )
-                if self.transcription_task.transcription_options.task == Task.TRANSCRIBE
+                # Anything that is not an explicit "translate to English" request
+                # (including the combined transcribe+translate task) transcribes.
+                if self.transcription_task.transcription_options.task != Task.TRANSLATE
                 else self.openai_client.audio.translations.create(**options)
             )
 

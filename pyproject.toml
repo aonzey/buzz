@@ -70,7 +70,14 @@ dependencies = [
     # nemo-toolkit-asr is NVIDIA's ASR-only split package; 2.8.0rc2 is the first
     # release to unpin transformers (allows 5.x). Regular nemo-toolkit caps at
     # transformers <4.58. cuda-bindings pinned <13 below to stay on CUDA 12.
-    "nemo-toolkit-asr[asr]==2.8.0rc2",
+    #
+    # LOCAL: temporarily disabled. It is only used by speaker identification
+    # (buzz/widgets/transcription_viewer/speaker_identification_widget.py, lazy
+    # import) and drags in editdistance==0.8.1 + docopt==0.6.2, neither of which
+    # ships a cp313 wheel. Both fail to build from source on Windows/MSVC
+    # (editdistance: MSVC mangles a Japanese comment -> C2059).
+    # Re-enable when only using whisper features is no longer enough.
+    # "nemo-toolkit-asr[asr]==2.8.0rc2",
     # nemo-toolkit-asr leaves cuda-bindings unpinned; keep it on CUDA 12 to match torch cu129
     "cuda-bindings>=12.6,<13; sys_platform != 'darwin'",
     "nltk>=3.10.3",

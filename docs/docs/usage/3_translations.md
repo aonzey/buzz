@@ -14,6 +14,10 @@ For AI to know how to translate enter translation instructions in the "Instructi
 
 > You are a professional translator, skilled in translating English to Spanish. You will only translate each sentence sent to you into Spanish and not add any notes or comments.
 
+Translation option is also available for files that already have speech recognized. Use Translate button on transcription viewer toolbar. If segments are selected in the transcription viewer table only those segments will be translated. Select them with `Shift + Click` for a range or `Ctrl + Click` to pick single segments. While the translation is running the progress window can pause it with **Stop Translation** and resume it with **Continue Translation**. Closing the progress window stops the translation completely.
+
+Translated segments can be exported together with the original text using the **Text+Translation** option of the export menu in the transcription viewer. From the command line use `--task "transcribe&translate"`.
+
 If you enable "Enable live recording transcription export" in Preferences, Live text transcripts will be exported to a text file as they get generated and translated. This file can be used to further integrate Live transcripts with other applications like OBS Studio.
 
 Approximate cost of translation for 1 hour long audio with ChatGPT or Claude model is around $1.00.

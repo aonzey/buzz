@@ -13,6 +13,12 @@ sidebar_position: 4
 
 **基础 URL** - 默认情况下，所有请求都会发送到 OpenAI 公司提供的 API。他们的 API URL 是 `https://api.openai.com/v1/`。其他公司也提供了兼容的 API。你可以在 [讨论页面](https://github.com/chidiwilliams/buzz/discussions/827) 找到可用的 API URL 列表。
 
+### 代理
+
+**代理** - 网络访问所使用的代理地址，用于模型下载、URL 导入和 AI 翻译请求。例如 `http://127.0.0.1:7890`。留空则直接连接。修改后立即生效，并在下次启动时继续使用。
+
+命令行参数 `--proxy` 只针对当次运行覆盖此设置。
+
 ### 默认导出文件名
 
 设置文件识别的默认导出文件名。例如，值为 `{{ input_file_name }} ({{ task }}d on {{ date_time }})` 时，TXT 导出文件将默认保存为`Input Filename (transcribed on 19-Sep-2023 20-39-25).txt`（输入文件名 (转录于 19-Sep-2023 20-39-25).txt）。

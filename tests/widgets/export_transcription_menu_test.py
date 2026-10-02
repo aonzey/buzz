@@ -74,7 +74,8 @@ class TestExportTranscriptionMenu:
         widget.actions()[0].trigger()
 
         with open(output_file_path, encoding="utf-8") as output_file:
-            assert "Bien venue dans" in output_file.read()
+            # TXT writes one time block per line.
+            assert output_file.read() == "Bien\nvenue dans\n"
 
     def test_should_include_structured_speaker_in_export(
         self,
@@ -107,6 +108,88 @@ class TestExportTranscriptionMenu:
         assert output_file_path.read_text(encoding="utf-8").startswith(
             "Nyomi: Bien"
         )
+
+    def test_text_translation_actions_are_hidden_without_complete_translation(
+        self,
+        qtbot: QtBot,
+        transcription,
+        transcription_service,
+    ):
+        translation_signal = TranslationSignal()
+        widget = ExportTranscriptionMenu(
+            transcription,
+            transcription_service,
+            False,
+            translation_signal.translation,
+        )
+        qtbot.add_widget(widget)
+
+        assert len(widget.text_translation_actions) == 3
+        assert not any(
+            action.isVisible() for action in widget.text_translation_actions
+        )
+
+    def test_text_translation_actions_are_hidden_when_only_some_are_translated(
+        self,
+        qtbot: QtBot,
+        transcription,
+        transcription_service,
+    ):
+        segments = transcription_service.get_transcription_segments(
+            transcription.id_as_uuid
+        )
+        transcription_service.update_segment_translation(segments[0].id, "Hello")
+
+        translation_signal = TranslationSignal()
+        widget = ExportTranscriptionMenu(
+            transcription,
+            transcription_service,
+            False,
+            translation_signal.translation,
+        )
+        qtbot.add_widget(widget)
+
+        assert not any(
+            action.isVisible() for action in widget.text_translation_actions
+        )
+
+    def test_should_export_text_and_translation(
+        self,
+        tmp_path: pathlib.Path,
+        qtbot: QtBot,
+        transcription,
+        transcription_service,
+        mocker,
+    ):
+        segments = transcription_service.get_transcription_segments(
+            transcription.id_as_uuid
+        )
+        for segment, translation in zip(segments, ["Hello", "come in"]):
+            transcription_service.update_segment_translation(
+                segment.id, translation
+            )
+
+        output_file_path = tmp_path / "whisper.txt"
+        mocker.patch(
+            "PyQt6.QtWidgets.QFileDialog.getSaveFileName",
+            return_value=(str(output_file_path), ""),
+        )
+
+        translation_signal = TranslationSignal()
+        widget = ExportTranscriptionMenu(
+            transcription,
+            transcription_service,
+            True,
+            translation_signal.translation,
+        )
+        qtbot.add_widget(widget)
+
+        assert all(action.isVisible() for action in widget.text_translation_actions)
+
+        widget.text_translation_actions[0].trigger()
+
+        with open(output_file_path, encoding="utf-8") as output_file:
+            assert output_file.read() == "Bien\nHello\nvenue dans\ncome in\n"
 
     def test_should_export_colored_speaker_docx_with_optional_timestamps(
         self,
