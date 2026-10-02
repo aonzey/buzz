@@ -381,6 +381,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       BUZZ_DISABLE_TELEMETRY: true
+    permissions:
+      # GITHUB_TOKEN defaults to read-only, and uploading release assets then
+      # fails with "Resource not accessible by integration".
+      contents: write
     strategy:
       fail-fast: false
       matrix:
