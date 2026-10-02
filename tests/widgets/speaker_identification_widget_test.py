@@ -1,3 +1,4 @@
+import importlib.util
 import logging
 import platform
 import time
@@ -19,10 +20,18 @@ if not (platform.system() == "Darwin" and platform.machine() == "x86_64") and pl
     )
 from tests.audio import test_audio_path
 
+# nemo-toolkit-asr is not installed on every platform Buzz supports (Windows,
+# for example), so skip instead of failing with ModuleNotFoundError.
+requires_nemo = pytest.mark.skipif(
+    importlib.util.find_spec("nemo") is None,
+    reason="NeMo is not installed on this platform",
+)
+
 @pytest.mark.skipif(
     (platform.system() == "Darwin" and platform.machine() == "x86_64") or platform.system() == "Windows",
     reason="Speaker identification dependencies (nemo/texterrors C extensions) crash on Windows and are unsupported on Intel Mac"
 )
+@requires_nemo
 class TestSpeakerIdentificationWidget:
     @pytest.fixture()
     def transcription(
